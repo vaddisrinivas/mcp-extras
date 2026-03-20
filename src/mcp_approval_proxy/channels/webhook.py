@@ -19,7 +19,6 @@ Timeout defaults to 120 seconds.
 
 from __future__ import annotations
 
-import json
 import sys
 
 import httpx
@@ -29,6 +28,7 @@ from .base import ApprovalChannel, ApprovalRequest, ApprovalResult
 
 class WebhookChannel(ApprovalChannel):
     def __init__(self, url: str, timeout: float = 120.0, headers: dict | None = None):
+        super().__init__()
         self.url = url
         self.timeout = timeout
         self.headers = headers or {}

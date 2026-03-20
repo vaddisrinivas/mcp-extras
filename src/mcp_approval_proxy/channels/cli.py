@@ -8,26 +8,31 @@ For non-interactive / piped use, set AUTO_APPROVE=1 env var (useful for testing)
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
-import asyncio
 
 from .base import ApprovalChannel, ApprovalRequest, ApprovalResult
 
 # ANSI colours (disabled if not a tty)
 _TTY = sys.stderr.isatty()
 YELLOW = "\033[33m" if _TTY else ""
-GREEN  = "\033[32m" if _TTY else ""
-RED    = "\033[31m" if _TTY else ""
-RESET  = "\033[0m"  if _TTY else ""
-BOLD   = "\033[1m"  if _TTY else ""
+GREEN = "\033[32m" if _TTY else ""
+RED = "\033[31m" if _TTY else ""
+RESET = "\033[0m" if _TTY else ""
+BOLD = "\033[1m" if _TTY else ""
 
 
 class CliChannel(ApprovalChannel):
     """Interactive CLI approval — blocks until user types y or n."""
 
     def __init__(self, auto_approve: bool = False, timeout: float = 120.0):
-        self.auto_approve = auto_approve or os.environ.get("AUTO_APPROVE", "").lower() in ("1", "true", "yes")
+        super().__init__()
+        self.auto_approve = auto_approve or os.environ.get("AUTO_APPROVE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         self.timeout = timeout
         self._lock = asyncio.Lock()  # serialise concurrent requests
 
