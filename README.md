@@ -2,7 +2,8 @@
 
 A FastMCP middleware library that intercepts MCP tool calls and gates write/destructive
 operations behind human approval. Supports **MCP-native elicitation** (inline dialog in
-Claude Code / Claude Desktop), **WhatsApp polls via Baileys/nanoclaw**, and a chained
+Claude Code / Claude Desktop), **HTTP webhooks** (custom approval dashboards),
+**WhatsApp polls via Baileys/nanoclaw**, **WhatsApp text via WAHA**, and a chained
 fallback model so desktop and mobile clients are both covered.
 
 ## Architecture
@@ -38,7 +39,9 @@ pip install mcp-approval-proxy
 uv add mcp-approval-proxy
 ```
 
-Requires Python 3.11+, FastMCP ≥ 3.0.
+Requires Python 3.11+, FastMCP >= 3.0.
+
+Dependencies: `fastmcp`, `httpx`, `pydantic`, `pydantic-settings`, `click`, `rich`.
 
 ## Quick start — standalone proxy
 
@@ -51,16 +54,33 @@ approval-proxy --upstream ~/.config/claude/claude_desktop_config.json --server f
 # Gate every tool
 approval-proxy --upstream ./mcp.json --mode all
 
-# Always allow reads, hard-deny delete, explain denials
+# Always allow reads, hard-deny delete patterns, explain denials
 approval-proxy --upstream ./mcp.json \
-  --allow "read_*,list_*" \
+  --allow "read_*" --allow "list_*" \
   --deny delete_file \
   --explain
+
+# Comma-separated patterns also work
+approval-proxy --upstream ./mcp.json \
+  --allow "read_*,list_*,get_*" \
+  --deny "delete_*,destroy_*"
 
 # Cache repeated approvals for 30 s; two-step confirm for high-risk actions
 approval-proxy --upstream ./mcp.json \
   --approve-ttl 30 \
   --high-risk-double-confirm
+
+# Dry-run: log what would be gated, never block
+approval-proxy --upstream ./mcp.json --dry-run
+
+# Write an audit log
+approval-proxy --upstream ./mcp.json --audit-log /tmp/approvals.jsonl
+
+# Expose via SSE instead of stdio
+approval-proxy --upstream ./mcp.json --transport sse --host 0.0.0.0 --port 8765
+
+# 30-second elicitation timeout, auto-deny on timeout
+approval-proxy --upstream ./mcp.json --timeout 30 --timeout-action deny
 ```
 
 Add to Claude Code / `claude.json`:
@@ -75,6 +95,27 @@ Add to Claude Code / `claude.json`:
   }
 }
 ```
+
+### CLI flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--upstream`, `-u` | `FILE` | *required* | Path to upstream MCP server config JSON |
+| `--server`, `-s` | `NAME` | first server | Which server from the config to proxy |
+| `--mode`, `-m` | `choice` | `destructive` | `destructive` / `all` / `annotated` / `none` |
+| `--allow` | `PATTERN` | | Tool names or fnmatch globs that bypass approval (repeatable, comma-separated) |
+| `--deny` | `PATTERN` | | Tool names or fnmatch globs that are permanently blocked (repeatable, comma-separated) |
+| `--timeout` | `SECONDS` | from config | Seconds to wait for elicitation response |
+| `--timeout-action` | `ACTION` | from config | `approve` or `deny` on timeout |
+| `--approve-ttl` | `SECONDS` | `0` | Cache identical approved tool calls for N seconds |
+| `--explain` | flag | `false` | Return policy/risk details in deny/block responses |
+| `--high-risk-double-confirm` | flag | `false` | Require two approvals for high-risk actions |
+| `--dry-run` | flag | `false` | Log decisions but never actually block |
+| `--audit-log` | `FILE` | | Append every decision as a JSON line to FILE |
+| `--transport` | `choice` | `stdio` | `stdio` / `sse` / `streamable-http` |
+| `--host` | `HOST` | `127.0.0.1` | Bind host (sse/streamable-http only) |
+| `--port` | `PORT` | `8765` | Bind port (sse/streamable-http only) |
+| `--version` | flag | | Print version and exit |
 
 ## Quick start — library (in-process FastMCP)
 
@@ -126,6 +167,45 @@ engine = ElicitationEngine(
 Returns `None` (fall-through) when the client does not support elicitation —
 a `ChainedEngine` will then try the next engine.
 
+### WebhookEngine — HTTP webhook approval
+
+Send approval requests to an HTTP webhook using the MCP **elicitation/create** format.
+Use this to integrate with custom approval systems, dashboards, or external services:
+
+```python
+from mcp_approval_proxy.engines import WebhookEngine
+
+engine = WebhookEngine(
+    url="https://approval-service.example.com/elicit",
+    timeout=120.0,
+    headers={"Authorization": "Bearer token123"},
+)
+```
+
+The webhook receives a POST request with the MCP `ElicitRequestFormParams` schema:
+```json
+{
+  "mode": "form",
+  "message": "Approval required — HIGH RISK\n...",
+  "requestedSchema": {
+    "type": "object",
+    "properties": {
+      "approved": {"type": "boolean"},
+      "reason": {"type": "string"}
+    },
+    "required": ["approved"]
+  }
+}
+```
+
+Expected response (`ElicitResult` format):
+```json
+{
+  "action": "accept|decline|cancel",
+  "content": {"approved": true, "reason": "..."}
+}
+```
+
 ### WhatsAppEngine — nanoclaw Baileys approvals
 
 Sends a WhatsApp poll via the **nanoclaw approvals API** (no QR re-scanning — uses
@@ -170,52 +250,13 @@ engine = WAHAEngine(
 )
 ```
 
-Recognised approval words: `👍  ✅  yes  ok  approve  y` (case variants)
-Recognised denial words: `❌  no  deny  denied  cancel  n` (case variants)
+Recognised approval words (case-insensitive): `yes`, `ok`, `approve`, `y`
+Recognised denial words (case-insensitive): `no`, `deny`, `denied`, `cancel`, `n`
 
 > **Note:** WAHA NOWEB cannot decrypt poll vote messages, so `WAHAEngine` uses
 > plain text messages rather than native WhatsApp polls.
 
-### WebhookEngine — HTTP webhook approval
-
-Send approval requests to an HTTP webhook using the MCP **elicitation/create** format.
-Use this to integrate with custom approval systems, dashboards, or external services:
-
-```python
-from mcp_approval_proxy.engines import WebhookEngine
-
-engine = WebhookEngine(
-    url="https://approval-service.example.com/elicit",
-    timeout=120.0,
-    headers={"Authorization": "Bearer token123"},
-)
-```
-
-The webhook receives a POST request with the MCP `ElicitRequestFormParams` schema:
-```json
-{
-  "mode": "form",
-  "message": "🔐 Approval required — 🔴 HIGH RISK\n...",
-  "requestedSchema": {
-    "type": "object",
-    "properties": {
-      "approved": {"type": "boolean"},
-      "reason": {"type": "string"}
-    },
-    "required": ["approved"]
-  }
-}
-```
-
-Expected response (`ElicitResult` format):
-```json
-{
-  "action": "accept|decline|cancel",
-  "content": {"approved": true, "reason": "..."}
-}
-```
-
-### ChainedEngine — elicitation + WhatsApp fallback
+### ChainedEngine — fallback across engines
 
 The canonical production setup: try MCP elicitation first (fast, native); fall back to
 WhatsApp if the client doesn't support it (mobile, CLI, non-Claude clients) or times out.
@@ -303,6 +344,24 @@ ApprovalMiddleware(
 )
 ```
 
+## Environment variable overrides
+
+`ProxyConfig` uses [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
+with the `APPROVAL_` prefix, so every global config field can be overridden via environment
+variables:
+
+| Env var | Config field | Default |
+|---------|-------------|---------|
+| `APPROVAL_DRY_RUN` | `dry_run` | `false` |
+| `APPROVAL_DEFAULT_TIMEOUT` | `default_timeout` | `120.0` |
+| `APPROVAL_DEFAULT_TIMEOUT_ACTION` | `default_timeout_action` | `deny` |
+| `APPROVAL_APPROVAL_TTL_SECONDS` | `approval_ttl_seconds` | `0.0` |
+| `APPROVAL_EXPLAIN_DECISIONS` | `explain_decisions` | `false` |
+| `APPROVAL_HIGH_RISK_REQUIRES_DOUBLE_CONFIRMATION` | `high_risk_requires_double_confirmation` | `false` |
+| `APPROVAL_AUDIT_LOG` | `audit_log` | |
+
+Config file values take precedence over env vars when loaded explicitly via `load_upstream_config()`.
+
 ## TransportPolicy — HTTP hardening
 
 `WhatsAppEngine` and `NanoclawApprovalsTransport` accept a `TransportPolicy` to control
@@ -343,20 +402,42 @@ The CLI supports Claude Desktop / `claude.json` format:
         "mode": "destructive",
         "alwaysAllow": ["read_file", "list_dir"],
         "alwaysDeny": ["delete_file"],
+        "allowPatterns": ["get_*", "list_*", "read_*"],
+        "denyPatterns": ["*delete*", "*destroy*", "*wipe*"],
+        "customAnnotations": {
+          "some_risky_tool": {"destructiveHint": true}
+        },
+        "timeout": 60,
+        "timeoutAction": "deny",
         "approvalTtlSeconds": 30,
         "explainDecisions": true,
-        "highRiskRequiresDoubleConfirmation": false
+        "highRiskRequiresDoubleConfirmation": false,
+        "approvalRetryAttempts": 2,
+        "approvalRetryInitialBackoffSeconds": 0.5,
+        "approvalRetryMaxBackoffSeconds": 5.0,
+        "approvalRetryBackoffMultiplier": 2.0,
+        "approvalOnTimeout": "deny",
+        "approvalOnTransportError": "fallback",
+        "approvalAllowInsecureHttp": false,
+        "approvalAllowedHosts": [],
+        "approvalDedupeKeyFields": ["server", "tool", "args"]
       }
     }
   },
   "approvalProxy": {
+    "dryRun": false,
+    "auditLog": "/tmp/mcp-approvals.jsonl",
     "defaultTimeout": 120,
     "defaultTimeoutAction": "deny",
     "approvalTtlSeconds": 0,
-    "explainDecisions": false
+    "explainDecisions": false,
+    "highRiskRequiresDoubleConfirmation": false
   }
 }
 ```
+
+Also supports single-server format (`{"command": "...", "args": [...]}`) and array format
+(`[{"name": "a", "command": "cmd_a"}, ...]`).
 
 ## Docker deployment (claw-over-9000 pattern)
 
@@ -367,10 +448,10 @@ volume and connects to nanoclaw's Baileys approvals API over a shared Docker net
 # docker-compose.yml (host-bridge service)
 environment:
   NANOCLAW_APPROVALS_URL: "http://nanoclaw:3002"
-  ELICITATION_TIMEOUT: "30"
-  APPROVAL_TIMEOUT_SECS: "120"
+  APPROVAL_DEFAULT_TIMEOUT: "120"
+  APPROVAL_DRY_RUN: "false"
 networks:
-  - nanoclaw-net   # external network shared with the nanoclaw container
+  - nanoclaw-net
 
 networks:
   nanoclaw-net:
@@ -379,6 +460,8 @@ networks:
 
 ```python
 # host-bridge/main.py
+import os
+from fastmcp import FastMCP
 from mcp_approval_proxy import ApprovalMiddleware
 from mcp_approval_proxy.engines import ChainedEngine, ElicitationEngine, WhatsAppEngine
 from mcp_approval_proxy.transports import TransportPolicy
@@ -389,7 +472,7 @@ engine = ChainedEngine([
         bridge_url=os.environ["NANOCLAW_APPROVALS_URL"],
         api_mode="approvals",
         poll_interval=1.0,
-        timeout=int(os.environ.get("APPROVAL_TIMEOUT_SECS", "120")),
+        timeout=120,
         transport_policy=TransportPolicy(allow_insecure_http=True),
     ),
 ])
@@ -460,10 +543,10 @@ audit = AuditLogger(None, dry_run=True)
 ## Development
 
 ```bash
-git clone https://github.com/your-org/mcp-approval-proxy
+git clone https://github.com/vaddisrinivas/mcp-approval-proxy
 cd mcp-approval-proxy
 uv sync
-uv run pytest         # 176 tests
+uv run pytest         # 207 tests
 uv run ruff check .
 uv run ruff format .
 ```
