@@ -386,9 +386,9 @@ async def _run(
         ),
     )
 
-    # Flatten allow/deny tuples to strings, then parse patterns
-    raw_allow = list(allow)
-    raw_deny = list(deny)
+    # Flatten allow/deny tuples and split comma-separated values
+    raw_allow = [p for raw in allow for p in raw.split(",")]
+    raw_deny = [p for raw in deny for p in raw.split(",")]
 
     always_allow = [t for t in raw_allow if not _is_pattern(t)]
     allow_patterns = [t for t in raw_allow if _is_pattern(t)]

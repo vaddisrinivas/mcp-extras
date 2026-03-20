@@ -144,7 +144,7 @@ def test_cli_timeout_float(cli_runner):
             mock_proxy = mock_build.return_value
             mock_proxy.run = lambda **kwargs: None
 
-            result = cli_runner.invoke(
+            cli_runner.invoke(
                 main,
                 [
                     "--upstream",

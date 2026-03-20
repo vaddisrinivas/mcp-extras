@@ -68,8 +68,14 @@ async def build_proxy(
     effective_deny = list(always_deny) + list(server_cfg.always_deny)
     effective_allow_patterns = list(allow_patterns or []) + list(server_cfg.allow_patterns)
     effective_deny_patterns = list(deny_patterns or []) + list(server_cfg.deny_patterns)
-    effective_timeout = server_cfg.timeout or proxy_cfg.default_timeout
-    effective_timeout_action = server_cfg.timeout_action or proxy_cfg.default_timeout_action
+    effective_timeout = (
+        server_cfg.timeout if server_cfg.timeout is not None else proxy_cfg.default_timeout
+    )
+    effective_timeout_action = (
+        server_cfg.timeout_action
+        if server_cfg.timeout_action is not None
+        else proxy_cfg.default_timeout_action
+    )
     effective_approval_ttl = (
         server_cfg.approval_ttl_seconds
         if server_cfg.approval_ttl_seconds is not None
@@ -150,15 +156,14 @@ async def build_proxy(
     async def _augmented_lifespan(server):
         async with original_lifespan(server):
             try:
-                async with client:
-                    tools = await client.list_tools()
-                    middleware.tool_registry = {t.name: t for t in tools}
-                    print(
-                        f"[approval-proxy] {server_cfg.name!r}: "
-                        f"{len(tools)} tool(s) indexed  "
-                        f"mode={effective_mode}  dry_run={proxy_cfg.dry_run}",
-                        file=sys.stderr,
-                    )
+                tools = await client.list_tools()
+                middleware.tool_registry = {t.name: t for t in tools}
+                print(
+                    f"[approval-proxy] {server_cfg.name!r}: "
+                    f"{len(tools)} tool(s) indexed  "
+                    f"mode={effective_mode}  dry_run={proxy_cfg.dry_run}",
+                    file=sys.stderr,
+                )
             except Exception as exc:
                 print(
                     f"[approval-proxy] Warning: could not pre-fetch tool list: {exc}",

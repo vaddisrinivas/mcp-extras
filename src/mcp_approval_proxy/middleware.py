@@ -54,7 +54,9 @@ class _DenyResult(ToolResult):
             content=self.content,
             isError=True,
         )
-from .engines import (
+
+
+from .engines import (  # noqa: E402
     ApprovalContext,
     ApprovalEngine,
     ElicitationEngine,  # re-exported for backward compat
@@ -230,7 +232,7 @@ def _needs_approval(
     destructive = annotations.destructiveHint if annotations else False
 
     if mode == "annotated":
-        return destructive
+        return bool(destructive)
 
     # ── mode == "destructive" (default) ───────────────────────────────────────
     if read_only:
@@ -468,8 +470,11 @@ class ApprovalMiddleware(Middleware):
                 if meta is None:
                     continue
                 self._apply_decorator_meta(server_tool.name, meta)
-        except Exception:
-            pass  # Graceful degradation if FastMCP API changes
+        except Exception as exc:
+            print(
+                f"[approval-proxy] warning: failed to read decorator metadata: {exc}",
+                file=sys.stderr,
+            )
 
     def _apply_decorator_meta(self, tool_name: str, meta: dict) -> None:
         """Merge ``@approval_required`` metadata into this middleware's policy."""
@@ -675,18 +680,25 @@ class ApprovalMiddleware(Middleware):
 
                 # Optional two-step high-risk confirmation.
                 if approved and risk == "high" and self.high_risk_requires_double_confirmation:
-                    second_ctx = ApprovalContext(
-                        server_name=self.server_name,
-                        tool_name=tool_name,
-                        args=tool_args,
-                        risk=risk,
-                        description=description,
-                        reason=(reason + " | Final confirmation required").strip(" |"),
-                        annotations=annotations,
-                        fastmcp_context=context.fastmcp_context,
-                    )
-                    second = await self.engine.request_approval(second_ctx)
-                    approved = bool(second)
+                    try:
+                        second_ctx = ApprovalContext(
+                            server_name=self.server_name,
+                            tool_name=tool_name,
+                            args=tool_args,
+                            risk=risk,
+                            description=description,
+                            reason=(reason + " | Final confirmation required").strip(" |"),
+                            annotations=annotations,
+                            fastmcp_context=context.fastmcp_context,
+                        )
+                        second = await self.engine.request_approval(second_ctx)
+                        approved = bool(second)
+                    except Exception as exc:
+                        print(
+                            f"[approval-proxy] second confirmation failed for `{tool_name}`: {exc}",
+                            file=sys.stderr,
+                        )
+                        approved = False
 
                 if approved:
                     self._cache_approval(approval_key)
@@ -720,8 +732,6 @@ class ApprovalMiddleware(Middleware):
                     )
                 )
         finally:
-            # Release the lock reference once no other coroutine is waiting on it.
-            # After `async with lock:` exits, if locked() is False then no one is
-            # queued behind us, so the dict entry is safe to remove.
-            if self._approval_locks.get(approval_key) is lock and not lock.locked():
-                self._approval_locks.pop(approval_key, None)
+            # Locks are lightweight; skip cleanup to avoid TOCTOU race.
+            # The dict grows at most to the number of unique approval keys seen.
+            pass

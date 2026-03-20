@@ -59,11 +59,12 @@ import json
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
-
-import mcp.types as mt
+from typing import TYPE_CHECKING, Any
 
 from .transports import ApprovalTransport, TransportPolicy, build_whatsapp_transport
+
+if TYPE_CHECKING:
+    import mcp.types as mt
 
 # ── Approval context ──────────────────────────────────────────────────────────
 
@@ -457,11 +458,14 @@ class WAHAEngine(ApprovalEngine):
                         ts = m.get("timestamp") or m.get("t") or 0
                         try:
                             ts_int = int(ts)
+                            # Normalize milliseconds to seconds
+                            if ts_int > 1_000_000_000_000:
+                                ts_int = ts_int // 1000
                         except (ValueError, TypeError):
                             ts_int = 0
                         if ts_int < sent_at:
                             continue  # message predates our request
-                        text = (m.get("body") or m.get("text") or "").strip()
+                        text = (m.get("body") or m.get("text") or "").strip().lower()
                         if text in _WAHA_APPROVE_WORDS:
                             print(
                                 f"[approval-proxy] WAHAEngine: ✅ approved `{ctx.tool_name}` (reply: {text!r})",
@@ -600,7 +604,7 @@ class WebhookEngine(ApprovalEngine):
                 f"[approval-proxy] WebhookEngine: {'✅ approved' if approved else '❌ denied'} `{ctx.tool_name}`",
                 file=sys.stderr,
             )
-            return approved
+            return bool(approved)
 
         print(
             f"[approval-proxy] WebhookEngine: unknown action {action!r} for `{ctx.tool_name}`",

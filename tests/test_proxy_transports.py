@@ -38,7 +38,7 @@ async def test_proxy_transport_default_stdio():
     proxy_cfg = ProxyConfig()
 
     with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy") as mock_create:
+        with patch("mcp_approval_proxy.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
