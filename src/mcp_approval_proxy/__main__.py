@@ -259,7 +259,7 @@ def main(
     import contextlib
 
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(
+        proxy, transport_mode, bind_host, bind_port = asyncio.run(
             _run(
                 upstream=upstream,
                 server=server,
@@ -284,6 +284,12 @@ def main(
                 port=port,
             )
         )
+        if transport_mode == "stdio":
+            proxy.run(transport="stdio")
+        elif transport_mode == "sse":
+            proxy.run(transport="sse", host=bind_host, port=bind_port)
+        else:
+            proxy.run(transport="streamable-http", host=bind_host, port=bind_port)
 
 
 async def _run(
@@ -416,12 +422,7 @@ async def _run(
         f"{flag_str}",
     )
 
-    if transport == "stdio":
-        proxy.run(transport="stdio")
-    elif transport == "sse":
-        proxy.run(transport="sse", host=host, port=port)
-    else:
-        proxy.run(transport="streamable-http", host=host, port=port)
+    return proxy, transport, host, port
 
 
 if __name__ == "__main__":
