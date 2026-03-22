@@ -1,21 +1,43 @@
 # mcp-approval-proxy
 
+[![CI](https://github.com/vaddisrinivas/mcp-approval-proxy/actions/workflows/test.yml/badge.svg)](https://github.com/vaddisrinivas/mcp-approval-proxy/actions/workflows/test.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/mcp-approval-proxy.svg)](https://pypi.org/project/mcp-approval-proxy)
+
 A FastMCP middleware library that intercepts MCP tool calls and gates write/destructive
 operations behind human approval. Supports **MCP-native elicitation** (inline dialog in
 Claude Code / Claude Desktop), **HTTP webhooks** (custom approval dashboards),
 **WhatsApp polls via Baileys/nanoclaw**, **WhatsApp text via WAHA**, and a chained
 fallback model so desktop and mobile clients are both covered.
 
+## The Problem: MCP Tools Without Guardrails
+
+The [Model Context Protocol](https://modelcontextprotocol.io/) gives AI agents access to powerful tools — file systems, databases, APIs, shell commands. But MCP has no built-in approval mechanism. Every tool call executes immediately, with no human oversight.
+
+This creates a **trust gap**:
+
+- An agent can `delete_file`, `drop_table`, or `deploy_to_prod` with zero confirmation
+- There's no audit trail of what was approved vs what the agent decided on its own
+- You can't distinguish "the human asked for this" from "the agent hallucinated this was needed"
+
+**mcp-approval-proxy** closes this gap. Drop it in front of any MCP server — no code changes required — and destructive operations require explicit human approval before execution.
+
+```
+Without proxy:  Claude → delete_file() → done (hope that was right)
+With proxy:     Claude → delete_file() → "Approve?" → human clicks yes → done
+```
+
 ## Architecture
 
 ```
 MCP Client (Claude Code / Claude Desktop / mobile)
       │  stdio / SSE / streamable-http
-      ▼
+      v
 ApprovalMiddleware  ──── this library
       │  on_call_tool() intercepts every tool call
-      │  ├── hard-blocked (always_deny / deny_patterns) ──→ error
-      │  ├── pass-through (read-only / always_allow / mode=none) ──→ upstream
+      │  ├── hard-blocked (always_deny / deny_patterns) ──> error
+      │  ├── pass-through (read-only / always_allow / mode=none) ──> upstream
       │  └── needs approval
       │            │
       │     ApprovalEngine.request_approval()
@@ -25,9 +47,9 @@ ApprovalMiddleware  ──── this library
       │            ├── WAHAEngine         ── WAHA REST API (text message polling)
       │            └── ChainedEngine      ── try engines in sequence
       │            │
-      │     approved ──→ forward to upstream MCP server
-      │     denied   ──→ error CallToolResult
-      ▼
+      │     approved ──> forward to upstream MCP server
+      │     denied   ──> error CallToolResult
+      v
 Upstream MCP Server (subprocess / HTTP / in-process FastMCP)
 ```
 
@@ -160,7 +182,7 @@ from mcp_approval_proxy.engines import ElicitationEngine
 engine = ElicitationEngine(
     timeout=120,              # seconds to wait (default 120)
     timeout_action="deny",    # "approve" | "deny" on timeout (default "deny")
-    fallthrough_on_timeout=False,  # True → pass None to ChainedEngine instead
+    fallthrough_on_timeout=False,  # True -> pass None to ChainedEngine instead
 )
 ```
 
@@ -228,8 +250,8 @@ engine = WhatsAppEngine(
 
 **nanoclaw API contract:**
 ```
-POST /approvals  { "message": "...", "timeoutMs": 120000 }  →  { "id": "abc123" }
-GET  /approvals/{id}  →  { "status": "pending" | "approved" | "denied" }
+POST /approvals  { "message": "...", "timeoutMs": 120000 }  ->  { "id": "abc123" }
+GET  /approvals/{id}  ->  { "status": "pending" | "approved" | "denied" }
 ```
 
 ### WAHAEngine — WAHA text-message polling
@@ -309,7 +331,7 @@ Call `await middleware.register_from_server(mcp)` after decorating to apply all 
 
 ```python
 ApprovalMiddleware(
-    # ── Gating policy ─────────────────────────────────────────────────────────
+    # -- Gating policy --
     mode="destructive",             # destructive | all | annotated | none
     always_allow=["read_file"],     # exact tool names: always pass-through
     always_deny=["rm_rf"],          # exact tool names: always block
@@ -319,23 +341,23 @@ ApprovalMiddleware(
         "my_tool": {"destructiveHint": True},
     },
 
-    # ── Approval engine ───────────────────────────────────────────────────────
+    # -- Approval engine --
     engine=ChainedEngine([...]),    # default: ElicitationEngine(timeout, timeout_action)
     timeout=120.0,                  # used only when engine= not supplied
     timeout_action="deny",          # used only when engine= not supplied
 
-    # ── Idempotency / deduplication ───────────────────────────────────────────
+    # -- Idempotency / deduplication --
     approval_ttl_seconds=30.0,      # cache approvals for N seconds (0 = disabled)
     approval_dedupe_key_fields=["server","tool","args"],  # what to hash
     approval_dedupe_arg_keys=[],    # restrict arg hashing to these keys
 
-    # ── Retry ─────────────────────────────────────────────────────────────────
+    # -- Retry --
     approval_retry_attempts=1,
     approval_retry_initial_backoff_seconds=0.0,
     approval_retry_backoff_multiplier=2.0,
     approval_retry_max_backoff_seconds=5.0,
 
-    # ── UX / observability ────────────────────────────────────────────────────
+    # -- UX / observability --
     dry_run=False,                  # log decisions but never block
     explain_decisions=False,        # include reason in deny messages
     high_risk_requires_double_confirmation=False,
@@ -477,10 +499,10 @@ engine = ChainedEngine([
     ),
 ])
 
-mcp = FastMCP("claw-host-bridge")
+mcp = FastMCP("my-server")
 mcp.add_middleware(ApprovalMiddleware(
     mode="all",
-    server_name="claw-host-bridge",
+    server_name="my-server",
     engine=engine,
     explain_decisions=True,
 ))
@@ -516,7 +538,7 @@ class PagerDutyEngine(ApprovalEngine):
 Every gated call is logged to stderr (or a file) as newline-delimited JSON:
 
 ```json
-{"ts": "2025-01-15T10:23:45.123Z", "server": "claw-host-bridge", "tool": "shell",
+{"ts": "2025-01-15T10:23:45.123Z", "server": "my-server", "tool": "shell",
  "decision": "approved", "risk": "high", "reason": "approved via ChainedEngine",
  "mode": "all", "duration_ms": 60683.1, "args": {"cmd": "ls -la"}}
 ```
@@ -539,6 +561,23 @@ audit = AuditLogger(None, dry_run=True)
 | `medium` | Name contains a write-like token (see full list in `middleware.py`) |
 | `low` | All other tools when `mode="all"` |
 | `unknown` | Pass-through tools in non-`all` modes |
+
+## Risks and Limitations
+
+- **Not a security boundary**: This is an approval layer, not a sandbox. A determined attacker with access to the MCP transport can bypass it.
+- **Elicitation support varies**: Not all MCP clients support `elicitation/create`. The ChainedEngine fallback pattern handles this, but test with your client.
+- **WhatsApp engines require external services**: WhatsAppEngine needs nanoclaw; WAHAEngine needs WAHA. These add operational complexity.
+- **Approval fatigue**: In `mode=all`, users may rubber-stamp approvals. Use `destructive` mode and `allow_patterns` to reduce noise.
+- **Single point of failure**: If the proxy crashes, all tool calls are blocked. Use process managers (systemd, Docker restart policies) in production.
+
+## Related Projects
+
+- **[olivetin-mcp](https://github.com/vaddisrinivas/olivetin-mcp)** — Hardened MCP server for OliveTin with built-in approval (uses this library's approval patterns)
+- **[Model Context Protocol](https://modelcontextprotocol.io/)** — The open standard for AI tool integration. [Spec](https://spec.modelcontextprotocol.io/) | [GitHub](https://github.com/modelcontextprotocol)
+- **[FastMCP](https://github.com/jlowin/fastmcp)** — The Python MCP framework this library builds on
+- **[OliveTin](https://github.com/OliveTin/OliveTin)** — Safe, parameterized shell action execution with web UI
+- **[nanoclaw](https://github.com/vaddisrinivas/nanoclaw)** — WhatsApp bridge (Baileys) with approvals API
+- **[OpenClaw](https://github.com/AgentrDev/openclaw)** — Another approach to AI agent orchestration
 
 ## Development
 

@@ -9,7 +9,11 @@ description = "Transparent MCP proxy that gates write/destructive tool calls beh
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-keywords = ["mcp", "model-context-protocol", "proxy", "approval", "elicitation"]
+keywords = [
+    "mcp", "model-context-protocol", "proxy", "approval", "elicitation",
+    "mcp-proxy", "ai-safety", "human-in-the-loop", "claude", "whatsapp",
+    "olivetin", "openclaw", "guardrails", "tool-gating",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
