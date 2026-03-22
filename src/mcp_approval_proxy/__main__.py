@@ -52,7 +52,7 @@ from . import __version__
 from .config import ProxyConfig, load_upstream_config
 from .proxy import build_proxy
 
-console = Console()
+console = Console(stderr=True)
 
 
 def _parse_patterns(value: str) -> list[str]:
@@ -313,7 +313,7 @@ async def _run(
     servers, file_proxy_cfg = load_upstream_config(Path(upstream))
 
     if not servers:
-        console.print(f"[red]Error:[/red] No servers found in {upstream}", file=sys.stderr)
+        console.print(f"[red]Error:[/red] No servers found in {upstream}")
         raise SystemExit(1)
 
     if server:
@@ -322,7 +322,6 @@ async def _run(
             available = ", ".join(s.name for s in servers)
             console.print(
                 f"[red]Error:[/red] Server {server!r} not found. Available: {available}",
-                file=sys.stderr,
             )
             raise SystemExit(1)
         server_cfg = matching[0]
@@ -332,7 +331,6 @@ async def _run(
             console.print(
                 f"[yellow]Warning:[/yellow] Multiple servers in config — using {server_cfg.name!r}. "
                 "Use --server to select another.",
-                file=sys.stderr,
             )
 
     # CLI flags override the approvalProxy section in the file
@@ -416,7 +414,6 @@ async def _run(
         f"[cyan][approval-proxy][/cyan] {server_cfg.name!r}  "
         f"mode={mode}  transport={transport}"
         f"{flag_str}",
-        file=sys.stderr,
     )
 
     if transport == "stdio":
