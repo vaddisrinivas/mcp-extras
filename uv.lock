@@ -594,8 +594,8 @@ wheels = [
 ]
 
 [[package]]
-name = "mcp-approval-proxy"
-version = "0.2.0"
+name = "mcp-extras"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -605,6 +605,16 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "rich" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
+channel = [
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -624,7 +634,12 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "rich", specifier = ">=13.0" },
+    { name = "starlette", marker = "extra == 'all'", specifier = ">=0.37.0" },
+    { name = "starlette", marker = "extra == 'channel'", specifier = ">=0.37.0" },
+    { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.30.0" },
+    { name = "uvicorn", marker = "extra == 'channel'", specifier = ">=0.30.0" },
 ]
+provides-extras = ["channel", "all"]
 
 [package.metadata.requires-dev]
 dev = [
