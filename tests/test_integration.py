@@ -15,8 +15,8 @@ from fastmcp.client import Client
 from fastmcp.server import create_proxy
 from fastmcp.server.elicitation import AcceptedElicitation, DeclinedElicitation
 
-from mcp_approval_proxy.audit import AuditLogger
-from mcp_approval_proxy.middleware import ApprovalMiddleware
+from mcp_extras.audit import AuditLogger
+from mcp_extras.middleware import ApprovalMiddleware
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared test server

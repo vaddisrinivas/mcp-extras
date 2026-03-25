@@ -1,15 +1,33 @@
-# mcp-approval-proxy
+# mcp-extras
 
-[![CI](https://github.com/vaddisrinivas/mcp-approval-proxy/actions/workflows/test.yml/badge.svg)](https://github.com/vaddisrinivas/mcp-approval-proxy/actions/workflows/test.yml)
+[![CI](https://github.com/vaddisrinivas/mcp-extras/actions/workflows/test.yml/badge.svg)](https://github.com/vaddisrinivas/mcp-extras/actions/workflows/test.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/mcp-approval-proxy.svg)](https://pypi.org/project/mcp-approval-proxy)
+[![PyPI](https://img.shields.io/pypi/v/mcp-extras.svg)](https://pypi.org/project/mcp-extras)
 
-A FastMCP middleware library that intercepts MCP tool calls and gates write/destructive
-operations behind human approval. Supports **MCP-native elicitation** (inline dialog in
-Claude Code / Claude Desktop), **HTTP webhooks** (custom approval dashboards),
-**WhatsApp polls via Baileys/nanoclaw**, **WhatsApp text via WAHA**, and a chained
-fallback model so desktop and mobile clients are both covered.
+Python extras for MCP — **approval proxy middleware** + **Claude Code channel SDK**.
+
+### Approval Proxy
+
+FastMCP middleware that gates write/destructive tool calls behind human approval.
+Supports MCP-native elicitation, HTTP webhooks, WhatsApp polls (nanoclaw),
+WhatsApp text (WAHA), and chained fallback.
+
+### Channel SDK
+
+Python SDK for building [Claude Code channels](https://code.claude.com/docs/en/channels-reference) —
+MCP servers that push events into Claude Code sessions. One-way (alerts/webhooks),
+two-way (chat bridges with reply tools), and permission relay.
+
+```python
+from mcp_extras.channel import ChannelServer
+
+ch = ChannelServer("my-channel", instructions="Events arrive as <channel>...")
+await ch.notify("build failed on main", meta={"severity": "high"})
+await ch.run_stdio()
+```
+
+> Previously `mcp-approval-proxy`. Old import paths still work with a deprecation warning.
 
 ## The Problem: MCP Tools Without Guardrails
 
@@ -56,14 +74,18 @@ Upstream MCP Server (subprocess / HTTP / in-process FastMCP)
 ## Install
 
 ```bash
-pip install mcp-approval-proxy
+pip install mcp-extras
 # or with uv
-uv add mcp-approval-proxy
+uv add mcp-extras
+
+# With SSE channel transport support
+pip install mcp-extras[channel]
 ```
 
 Requires Python 3.11+, FastMCP >= 3.0.
 
 Dependencies: `fastmcp`, `httpx`, `pydantic`, `pydantic-settings`, `click`, `rich`.
+Optional (channel SSE): `uvicorn`, `starlette`.
 
 ## Quick start — standalone proxy
 
@@ -143,7 +165,7 @@ Add to Claude Code / `claude.json`:
 
 ```python
 from fastmcp import FastMCP
-from mcp_approval_proxy import ApprovalMiddleware
+from mcp_extras import ApprovalMiddleware
 
 mcp = FastMCP("my-server")
 
@@ -177,7 +199,7 @@ Sends an `elicitation/create` request to the connected MCP client. The user sees
 formatted inline dialog with tool name, risk level, arguments, and annotations.
 
 ```python
-from mcp_approval_proxy.engines import ElicitationEngine
+from mcp_extras.engines import ElicitationEngine
 
 engine = ElicitationEngine(
     timeout=120,              # seconds to wait (default 120)
@@ -195,7 +217,7 @@ Send approval requests to an HTTP webhook using the MCP **elicitation/create** f
 Use this to integrate with custom approval systems, dashboards, or external services:
 
 ```python
-from mcp_approval_proxy.engines import WebhookEngine
+from mcp_extras.engines import WebhookEngine
 
 engine = WebhookEngine(
     url="https://approval-service.example.com/elicit",
@@ -234,8 +256,8 @@ Sends a WhatsApp poll via the **nanoclaw approvals API** (no QR re-scanning — 
 the existing authenticated Baileys session):
 
 ```python
-from mcp_approval_proxy.engines import WhatsAppEngine
-from mcp_approval_proxy.transports import TransportPolicy
+from mcp_extras.engines import WhatsAppEngine
+from mcp_extras.transports import TransportPolicy
 
 engine = WhatsAppEngine(
     bridge_url="http://nanoclaw:3002",   # nanoclaw approvals HTTP endpoint
@@ -260,7 +282,7 @@ Sends a text message via WAHA (WhatsApp HTTP API) and polls for a keyword reply.
 Use this if you run WAHA (NOWEB engine) rather than nanoclaw/Baileys:
 
 ```python
-from mcp_approval_proxy.engines import WAHAEngine
+from mcp_extras.engines import WAHAEngine
 
 engine = WAHAEngine(
     waha_url="http://waha:3000",
@@ -284,8 +306,8 @@ The canonical production setup: try MCP elicitation first (fast, native); fall b
 WhatsApp if the client doesn't support it (mobile, CLI, non-Claude clients) or times out.
 
 ```python
-from mcp_approval_proxy.engines import ChainedEngine, ElicitationEngine, WhatsAppEngine
-from mcp_approval_proxy.transports import TransportPolicy
+from mcp_extras.engines import ChainedEngine, ElicitationEngine, WhatsAppEngine
+from mcp_extras.transports import TransportPolicy
 
 engine = ChainedEngine([
     ElicitationEngine(timeout=30, fallthrough_on_timeout=True),
@@ -310,7 +332,7 @@ If all engines return `None`, `ChainedEngine.default` is used (default: `False` 
 For in-process FastMCP servers you can annotate tools directly:
 
 ```python
-from mcp_approval_proxy.decorators import approval_required
+from mcp_extras.decorators import approval_required
 
 @mcp.tool()
 @approval_required(force=True, risk="high", reason="Permanently removes data")
@@ -390,7 +412,7 @@ Config file values take precedence over env vars when loaded explicitly via `loa
 HTTP transport behaviour:
 
 ```python
-from mcp_approval_proxy.transports import TransportPolicy
+from mcp_extras.transports import TransportPolicy
 
 policy = TransportPolicy(
     retry_attempts=2,
@@ -484,9 +506,9 @@ networks:
 # host-bridge/main.py
 import os
 from fastmcp import FastMCP
-from mcp_approval_proxy import ApprovalMiddleware
-from mcp_approval_proxy.engines import ChainedEngine, ElicitationEngine, WhatsAppEngine
-from mcp_approval_proxy.transports import TransportPolicy
+from mcp_extras import ApprovalMiddleware
+from mcp_extras.engines import ChainedEngine, ElicitationEngine, WhatsAppEngine
+from mcp_extras.transports import TransportPolicy
 
 engine = ChainedEngine([
     ElicitationEngine(timeout=30, fallthrough_on_timeout=True),
@@ -513,7 +535,7 @@ mcp.add_middleware(ApprovalMiddleware(
 Implement `ApprovalTransport` to add Slack, PagerDuty, email, etc.:
 
 ```python
-from mcp_approval_proxy.transports import ApprovalTransport
+from mcp_extras.transports import ApprovalTransport
 
 class SlackApprovalTransport(ApprovalTransport):
     async def request(self, *, question: str, timeout: float, tool_name: str) -> bool | None:
@@ -525,7 +547,7 @@ Or subclass `ApprovalEngine` directly for higher-level control over message form
 and the full `ApprovalContext`:
 
 ```python
-from mcp_approval_proxy.engines import ApprovalEngine, ApprovalContext
+from mcp_extras.engines import ApprovalEngine, ApprovalContext
 
 class PagerDutyEngine(ApprovalEngine):
     async def request_approval(self, ctx: ApprovalContext) -> bool | None:
@@ -544,7 +566,7 @@ Every gated call is logged to stderr (or a file) as newline-delimited JSON:
 ```
 
 ```python
-from mcp_approval_proxy.audit import AuditLogger
+from mcp_extras.audit import AuditLogger
 
 # Write to file
 audit = AuditLogger("/var/log/approvals.jsonl")
@@ -582,10 +604,10 @@ audit = AuditLogger(None, dry_run=True)
 ## Development
 
 ```bash
-git clone https://github.com/vaddisrinivas/mcp-approval-proxy
-cd mcp-approval-proxy
+git clone https://github.com/vaddisrinivas/mcp-extras
+cd mcp-extras
 uv sync
-uv run pytest         # 207 tests
+uv run pytest         # 262 tests
 uv run ruff check .
 uv run ruff format .
 ```

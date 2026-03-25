@@ -1,7 +1,7 @@
 """Backward-compatible channel base classes.
 
 .. deprecated::
-    Use :class:`mcp_approval_proxy.engines.ApprovalEngine` directly.
+    Use :class:`mcp_extras.engines.ApprovalEngine` directly.
     :class:`ApprovalChannel` is now an alias for :class:`ApprovalEngine` and
     :class:`ApprovalRequest` / :class:`ApprovalResult` are retained for
     compatibility only.
@@ -13,14 +13,14 @@ import json
 import warnings
 from dataclasses import dataclass
 
-from mcp_approval_proxy.engines import ApprovalContext, ApprovalEngine
+from mcp_extras.engines import ApprovalContext, ApprovalEngine
 
 
 def _warn_legacy_channel_api(channel_name: str) -> None:
     warnings.warn(
         (
             f"{channel_name} uses legacy channels API and will be removed in a future release; "
-            "prefer ApprovalEngine + ApprovalTransport from mcp_approval_proxy.engines/transports."
+            "prefer ApprovalEngine + ApprovalTransport from mcp_extras.engines/transports."
         ),
         DeprecationWarning,
         stacklevel=3,
@@ -29,7 +29,7 @@ def _warn_legacy_channel_api(channel_name: str) -> None:
 
 @dataclass
 class ApprovalRequest:
-    """Legacy request dataclass — prefer :class:`~mcp_approval_proxy.engines.ApprovalContext`."""
+    """Legacy request dataclass — prefer :class:`~mcp_extras.engines.ApprovalContext`."""
 
     server_name: str
     tool_name: str
@@ -51,7 +51,7 @@ class ApprovalChannel(ApprovalEngine):
     """Abstract base for approval channels.
 
     .. deprecated::
-        Subclass :class:`~mcp_approval_proxy.engines.ApprovalEngine` instead
+        Subclass :class:`~mcp_extras.engines.ApprovalEngine` instead
         and implement :meth:`request_approval`.  This class is kept for
         backward compatibility.
     """

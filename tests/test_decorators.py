@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 from fastmcp import FastMCP
 
-from mcp_approval_proxy.audit import AuditLogger
-from mcp_approval_proxy.decorators import APPROVAL_META_ATTR, approval_required
-from mcp_approval_proxy.middleware import ApprovalMiddleware
+from mcp_extras.audit import AuditLogger
+from mcp_extras.decorators import APPROVAL_META_ATTR, approval_required
+from mcp_extras.middleware import ApprovalMiddleware
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Decorator metadata

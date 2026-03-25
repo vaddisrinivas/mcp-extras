@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_approval_proxy.engines import WAHAEngine
+from mcp_extras.engines import WAHAEngine
 
 
 def test_waha_engine_normalizes_chat_id():

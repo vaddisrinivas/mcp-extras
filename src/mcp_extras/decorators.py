@@ -11,7 +11,7 @@ Quick reference
 .. code-block:: python
 
     from fastmcp import FastMCP
-    from mcp_approval_proxy.decorators import approval_required
+    from mcp_extras.decorators import approval_required
 
     server = FastMCP(name="my-server")
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_approval_proxy.channels.cli import CliChannel
-from mcp_approval_proxy.channels.webhook import WebhookChannel
+from mcp_extras.channels.cli import CliChannel
+from mcp_extras.channels.webhook import WebhookChannel
 
 
 def test_cli_channel_emits_deprecation_warning():

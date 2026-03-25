@@ -30,7 +30,7 @@ Implement ``request_approval`` and return:
 
 Example — elicitation first, WAHA text-message fallback::
 
-    from mcp_approval_proxy.engines import ChainedEngine, ElicitationEngine, WAHAEngine
+    from mcp_extras.engines import ChainedEngine, ElicitationEngine, WAHAEngine
 
     mw = ApprovalMiddleware(
         engine=ChainedEngine([
@@ -44,8 +44,8 @@ Example — elicitation first, WAHA text-message fallback::
 
 Example — legacy WhatsApp bridge::
 
-    from mcp_approval_proxy.engines import WhatsAppEngine
-    from mcp_approval_proxy import ApprovalMiddleware
+    from mcp_extras.engines import WhatsAppEngine
+    from mcp_extras import ApprovalMiddleware
 
     mw = ApprovalMiddleware(
         engine=WhatsAppEngine(bridge_url="http://localhost:9003"),

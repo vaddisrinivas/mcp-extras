@@ -279,7 +279,7 @@ class ApprovalMiddleware(Middleware):
     """
     Intercepts ``call_tool`` requests, classifies them by risk, and either
     forwards them immediately, hard-blocks them, or delegates to an
-    :class:`~mcp_approval_proxy.engines.ApprovalEngine` for approval.
+    :class:`~mcp_extras.engines.ApprovalEngine` for approval.
 
     Parameters
     ----------
@@ -299,12 +299,12 @@ class ApprovalMiddleware(Middleware):
 
             {"some_tool": {"destructiveHint": True}}
     engine:
-        :class:`~mcp_approval_proxy.engines.ApprovalEngine` instance to use
+        :class:`~mcp_extras.engines.ApprovalEngine` instance to use
         for approval requests.  Defaults to
-        :class:`~mcp_approval_proxy.engines.ElicitationEngine` with the
+        :class:`~mcp_extras.engines.ElicitationEngine` with the
         supplied ``timeout`` / ``timeout_action``.
-        Pass a :class:`~mcp_approval_proxy.engines.WhatsAppEngine` or
-        :class:`~mcp_approval_proxy.engines.ChainedEngine` here to route
+        Pass a :class:`~mcp_extras.engines.WhatsAppEngine` or
+        :class:`~mcp_extras.engines.ChainedEngine` here to route
         approvals through an external channel.
     timeout:
         Seconds to wait (used only when ``engine`` is not supplied, to
@@ -314,7 +314,7 @@ class ApprovalMiddleware(Middleware):
     dry_run:
         If ``True``, log decisions but never actually block a call.
     audit:
-        :class:`~mcp_approval_proxy.audit.AuditLogger` instance.
+        :class:`~mcp_extras.audit.AuditLogger` instance.
     server_name:
         Display name for this upstream (used in messages and audit log).
     """
@@ -438,7 +438,7 @@ class ApprovalMiddleware(Middleware):
 
     async def register_from_server(self, server: Any) -> None:
         """Populate ``tool_registry`` from a live FastMCP server and read
-        :func:`~mcp_approval_proxy.decorators.approval_required` decorator
+        :func:`~mcp_extras.decorators.approval_required` decorator
         metadata from each tool function.
 
         Call this instead of (or in addition to) manually assigning

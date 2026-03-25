@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_approval_proxy.config import ProxyConfig, ServerConfig
-from mcp_approval_proxy.proxy import build_proxy
+from mcp_extras.config import ProxyConfig, ServerConfig
+from mcp_extras.proxy import build_proxy
 
 
 @pytest.fixture
@@ -37,8 +37,8 @@ async def test_proxy_transport_default_stdio():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -58,8 +58,8 @@ async def test_proxy_transport_http_url():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -79,8 +79,8 @@ async def test_proxy_transport_sse_url():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -101,8 +101,8 @@ def test_proxy_run_stdio():
     proxy_cfg = ProxyConfig()
 
     async def setup():
-        with patch("mcp_approval_proxy.proxy.Client"):
-            with patch("mcp_approval_proxy.proxy.create_proxy") as mock_create:
+        with patch("mcp_extras.proxy.Client"):
+            with patch("mcp_extras.proxy.create_proxy") as mock_create:
                 mock_proxy = MagicMock()
                 mock_proxy.run = MagicMock()
                 mock_create.return_value = mock_proxy
@@ -130,8 +130,8 @@ def test_proxy_run_sse():
     proxy_cfg = ProxyConfig()
 
     async def setup():
-        with patch("mcp_approval_proxy.proxy.Client"):
-            with patch("mcp_approval_proxy.proxy.create_proxy") as mock_create:
+        with patch("mcp_extras.proxy.Client"):
+            with patch("mcp_extras.proxy.create_proxy") as mock_create:
                 mock_proxy = MagicMock()
                 mock_proxy.run = MagicMock()
                 mock_create.return_value = mock_proxy
@@ -158,8 +158,8 @@ async def test_proxy_mode_destructive():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -180,8 +180,8 @@ async def test_proxy_mode_all():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -202,8 +202,8 @@ async def test_proxy_mode_none():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -224,8 +224,8 @@ async def test_proxy_allow_patterns():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -247,8 +247,8 @@ async def test_proxy_deny_patterns():
     )
     proxy_cfg = ProxyConfig()
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,
@@ -275,8 +275,8 @@ async def test_proxy_with_audit_log():
     try:
         proxy_cfg = ProxyConfig(audit_log=audit_log_path)
 
-        with patch("mcp_approval_proxy.proxy.Client"):
-            with patch("mcp_approval_proxy.proxy.create_proxy"):
+        with patch("mcp_extras.proxy.Client"):
+            with patch("mcp_extras.proxy.create_proxy"):
                 proxy = await build_proxy(
                     server_cfg=server_cfg,
                     proxy_cfg=proxy_cfg,
@@ -299,8 +299,8 @@ async def test_proxy_dry_run_mode():
     )
     proxy_cfg = ProxyConfig(dry_run=True)
 
-    with patch("mcp_approval_proxy.proxy.Client"):
-        with patch("mcp_approval_proxy.proxy.create_proxy"):
+    with patch("mcp_extras.proxy.Client"):
+        with patch("mcp_extras.proxy.create_proxy"):
             proxy = await build_proxy(
                 server_cfg=server_cfg,
                 proxy_cfg=proxy_cfg,

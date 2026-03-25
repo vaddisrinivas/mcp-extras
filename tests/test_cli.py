@@ -10,8 +10,8 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from mcp_approval_proxy import __version__
-from mcp_approval_proxy.__main__ import main
+from mcp_extras import __version__
+from mcp_extras.__main__ import main
 
 
 @pytest.fixture
@@ -140,7 +140,7 @@ def test_cli_timeout_float(cli_runner):
         config_path = f.name
 
     try:
-        with patch("mcp_approval_proxy.__main__.build_proxy") as mock_build:
+        with patch("mcp_extras.__main__.build_proxy") as mock_build:
             mock_proxy = mock_build.return_value
             mock_proxy.run = lambda **kwargs: None
 
@@ -170,7 +170,7 @@ def test_cli_port_validation(cli_runner):
         config_path = f.name
 
     try:
-        with patch("mcp_approval_proxy.__main__.build_proxy") as mock_build:
+        with patch("mcp_extras.__main__.build_proxy") as mock_build:
             mock_proxy = mock_build.return_value
             mock_proxy.run = lambda **kwargs: None
 

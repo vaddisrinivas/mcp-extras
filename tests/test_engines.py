@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcp_approval_proxy.engines import (
+from mcp_extras.engines import (
     ApprovalContext,
     ChainedEngine,
     ElicitationEngine,
@@ -14,7 +14,7 @@ from mcp_approval_proxy.engines import (
     _build_elicitation_message,
     _client_supports_elicitation,
 )
-from mcp_approval_proxy.transports import TransportPolicy
+from mcp_extras.transports import TransportPolicy
 
 
 def _ctx(**kwargs) -> ApprovalContext:

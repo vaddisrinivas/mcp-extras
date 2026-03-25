@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mcp_approval_proxy.config import ProxyConfig, load_upstream_config
+from mcp_extras.config import ProxyConfig, load_upstream_config
 
 
 @pytest.fixture

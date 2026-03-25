@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from mcp_approval_proxy.audit import AuditLogger, _sanitise
+from mcp_extras.audit import AuditLogger, _sanitise
 
 
 class TestAuditLogger:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_approval_proxy.engines import ApprovalContext, WebhookEngine
+from mcp_extras.engines import ApprovalContext, WebhookEngine
 
 
 @pytest.mark.asyncio

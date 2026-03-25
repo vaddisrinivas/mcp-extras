@@ -5,7 +5,7 @@ Internal design notes for contributors and integrators.
 ## Module map
 
 ```
-src/mcp_approval_proxy/
+src/mcp_extras/
 ├── __init__.py          Public API surface — re-exports all user-facing symbols
 ├── middleware.py        ApprovalMiddleware (FastMCP Middleware subclass)
 ├── engines.py           ApprovalEngine ABC + built-in engines

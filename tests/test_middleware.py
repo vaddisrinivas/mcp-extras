@@ -13,9 +13,9 @@ from fastmcp.server.elicitation import (
 )
 from fastmcp.server.middleware import MiddlewareContext
 
-from mcp_approval_proxy.audit import AuditLogger
-from mcp_approval_proxy.engines import _build_elicitation_message
-from mcp_approval_proxy.middleware import (
+from mcp_extras.audit import AuditLogger
+from mcp_extras.engines import _build_elicitation_message
+from mcp_extras.middleware import (
     ApprovalMiddleware,
     _deny,
     _is_write_heuristic,
