@@ -646,6 +646,42 @@ class ChainedEngine(ApprovalEngine):
         return self.default
 
 
+# ── Callback engine ───────────────────────────────────────────────────────────
+
+
+class CallbackEngine(ApprovalEngine):
+    """Delegates approval to an async callback function.
+
+    Use this to integrate custom approval logic without subclassing.
+    The callback receives an :class:`ApprovalContext` and must return
+    ``True`` (approved), ``False`` (denied), or ``None`` (indeterminate).
+
+    Example — poll-based approval via a chat adapter::
+
+        async def poll_approve(ctx: ApprovalContext) -> bool | None:
+            question = f"Allow {ctx.tool_name}?"
+            poll_id = await adapter.send_poll(host_jid, question, ["Yes", "No"])
+            # ... wait for poll response ...
+            return result
+
+        engine = CallbackEngine(poll_approve)
+        middleware = ApprovalMiddleware(engine=engine)
+
+    Example — simple auto-approve for low risk::
+
+        async def auto_approve(ctx: ApprovalContext) -> bool | None:
+            return True if ctx.risk == "low" else None  # fall through to next engine
+
+        engine = ChainedEngine([CallbackEngine(auto_approve), ElicitationEngine()])
+    """
+
+    def __init__(self, callback: Any) -> None:
+        self._callback = callback
+
+    async def request_approval(self, ctx: ApprovalContext) -> bool | None:
+        return await self._callback(ctx)
+
+
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 _RISK_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢", "unknown": "⚪"}

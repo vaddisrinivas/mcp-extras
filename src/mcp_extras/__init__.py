@@ -26,6 +26,7 @@ from .decorators import approval_required
 from .engines import (
     ApprovalContext,
     ApprovalEngine,
+    CallbackEngine,
     ChainedEngine,
     ElicitationEngine,
     WAHAEngine,
@@ -62,6 +63,7 @@ __all__ = [
     "WAHAEngine",
     "WebhookEngine",
     "WhatsAppEngine",
+    "CallbackEngine",
     "ChainedEngine",
     # Errors
     "ApprovalProxyError",
