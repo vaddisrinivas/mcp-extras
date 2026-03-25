@@ -416,3 +416,93 @@ class TestBuildElicitationMessage:
             annotations=None,
         )
         assert "truncated" in msg
+
+
+# ── CallbackEngine ───────────────────────────────────────────────────────────
+
+
+class TestCallbackEngine:
+    async def test_callback_returns_true(self):
+        from mcp_extras.engines import CallbackEngine
+
+        async def approve(ctx):
+            return True
+
+        engine = CallbackEngine(approve)
+        assert await engine.request_approval(_ctx()) is True
+
+    async def test_callback_returns_false(self):
+        from mcp_extras.engines import CallbackEngine
+
+        async def deny(ctx):
+            return False
+
+        engine = CallbackEngine(deny)
+        assert await engine.request_approval(_ctx()) is False
+
+    async def test_callback_returns_none(self):
+        from mcp_extras.engines import CallbackEngine
+
+        async def indeterminate(ctx):
+            return None
+
+        engine = CallbackEngine(indeterminate)
+        assert await engine.request_approval(_ctx()) is None
+
+    async def test_callback_receives_context(self):
+        from mcp_extras.engines import CallbackEngine
+
+        received = []
+
+        async def capture(ctx):
+            received.append(ctx)
+            return True
+
+        engine = CallbackEngine(capture)
+        ctx = _ctx(tool_name="my_tool", risk="high")
+        await engine.request_approval(ctx)
+        assert len(received) == 1
+        assert received[0].tool_name == "my_tool"
+        assert received[0].risk == "high"
+
+    async def test_callback_with_chained_engine(self):
+        from mcp_extras.engines import CallbackEngine
+
+        async def fallthrough(ctx):
+            return None  # indeterminate
+
+        async def approve(ctx):
+            return True
+
+        chain = ChainedEngine([CallbackEngine(fallthrough), CallbackEngine(approve)])
+        assert await chain.request_approval(_ctx()) is True
+
+    async def test_callback_exception_propagates(self):
+        from mcp_extras.engines import CallbackEngine
+
+        async def boom(ctx):
+            raise ValueError("test error")
+
+        engine = CallbackEngine(boom)
+        with pytest.raises(ValueError, match="test error"):
+            await engine.request_approval(_ctx())
+
+    async def test_callback_conditional_on_risk(self):
+        from mcp_extras.engines import CallbackEngine
+
+        async def auto_approve_low(ctx):
+            return True if ctx.risk == "low" else None
+
+        engine = CallbackEngine(auto_approve_low)
+        assert await engine.request_approval(_ctx(risk="low")) is True
+        assert await engine.request_approval(_ctx(risk="high")) is None
+
+    async def test_callback_reads_args(self):
+        from mcp_extras.engines import CallbackEngine
+
+        async def check_args(ctx):
+            return ctx.args.get("safe") is True
+
+        engine = CallbackEngine(check_args)
+        assert await engine.request_approval(_ctx(args={"safe": True})) is True
+        assert await engine.request_approval(_ctx(args={"safe": False})) is False
