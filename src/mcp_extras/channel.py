@@ -294,8 +294,16 @@ class ChannelServer:
 
     # ── Transports ───────────────────────────────────────────────
 
-    async def run_stdio(self) -> None:
-        """Run as a stdio channel (Claude Code spawns this as subprocess)."""
+    async def run_stdio(
+        self,
+        extra_tasks: list[Callable[[], Any]] | None = None,
+    ) -> None:
+        """Run as a stdio channel (Claude Code spawns this as subprocess).
+
+        Args:
+            extra_tasks: Additional async callables to run in the task group
+                (e.g. adapter.connect, file watchers).
+        """
         server = self._build_server()
         init_opts = self._create_init_options(server)
         self._install_signals()
@@ -303,12 +311,15 @@ class ChannelServer:
         async with stdio_server() as (rs, ws), anyio.create_task_group() as tg:
             tg.start_soon(server.run, rs, ws, init_opts)
             tg.start_soon(self._drain_notifications, ws)
+            for task in extra_tasks or []:
+                tg.start_soon(task)
 
     async def run_sse(
         self,
         host: str = "127.0.0.1",
         port: int = 3000,
         extra_routes: list | None = None,
+        extra_tasks: list[Callable[[], Any]] | None = None,
     ) -> None:
         """Run as an SSE channel with optional extra Starlette routes.
 
@@ -316,6 +327,7 @@ class ChannelServer:
             host: Bind address.
             port: Bind port.
             extra_routes: Additional Starlette Route objects to mount.
+            extra_tasks: Additional async callables to run in the task group.
         """
         import uvicorn
         from mcp.server.sse import SseServerTransport
@@ -353,6 +365,8 @@ class ChannelServer:
                     uvicorn.Config(app, host=host, port=port, log_level="warning")
                 ).serve
             )
+            for task in extra_tasks or []:
+                tg.start_soon(task)
 
     # ── Convenience: signal tools_changed ────────────────────────
 
