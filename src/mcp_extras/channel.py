@@ -1,45 +1,37 @@
 """
-Claude Code Channel SDK for Python.
+Claude Code Channel SDK for Python (FastMCP-native).
 
 Build MCP servers that push events into Claude Code sessions.
-Supports one-way (alerts/webhooks) and two-way (chat bridges) channels,
-plus permission relay for remote tool approval.
+Supports one-way (alerts/webhooks) and two-way (chat bridges),
+permission relay, FastMCP mount() for service composition,
+and middleware for tool gating.
 
 One-way channel::
 
     from mcp_extras.channel import ChannelServer
 
     ch = ChannelServer("webhook", instructions="Events from webhook channel...")
-    # Push events from your HTTP handler, message queue, etc.
     await ch.notify("build failed on main", meta={"severity": "high"})
     await ch.run_stdio()
 
-Two-way channel with reply tool::
+Two-way with mounted services::
 
+    from fastmcp import FastMCP
     from mcp_extras.channel import ChannelServer
-    from mcp.types import Tool
 
-    ch = ChannelServer("my-chat", instructions="Reply with the reply tool.")
-    ch.add_tool(Tool(name="reply", description="Send reply", inputSchema={...}))
+    memory = FastMCP("memory")
+    @memory.tool()
+    def memory_write(app: str, entity: str, name: str) -> str: ...
 
-    @ch.on_tool_call
-    async def handle(name, arguments):
-        if name == "reply":
-            send_to_chat(arguments["chat_id"], arguments["text"])
-            return [TextContent(type="text", text="sent")]
-
+    ch = ChannelServer("my-app", instructions="...")
+    ch.mount(memory)  # memory tools available through the channel
     await ch.run_stdio()
 
-Permission relay::
+With approval middleware::
 
-    ch = ChannelServer("my-chat", permission_relay=True)
-
-    @ch.on_permission_request
-    async def handle(request_id, tool_name, description, input_preview):
-        send_to_chat(f"Approve {tool_name}? Reply 'yes {request_id}' or 'no {request_id}'")
-
-    # When user replies:
-    await ch.send_permission_verdict(request_id, "allow")
+    from mcp_extras import ApprovalMiddleware
+    ch = ChannelServer("my-app")
+    ch.add_middleware(ApprovalMiddleware(mode="destructive"))
 """
 
 from __future__ import annotations
@@ -48,33 +40,23 @@ import asyncio
 import contextlib
 import signal
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 import anyio
-from mcp.server import Server
+from fastmcp import FastMCP
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
 from mcp.types import (
     JSONRPCMessage,
     JSONRPCNotification,
-    Resource,
-    ResourceTemplate,
-    TextContent,
-    TextResourceContents,
-    Tool,
 )
 
 _CHANNEL_METHOD = "notifications/claude/channel"
 _PERMISSION_REQUEST_METHOD = "notifications/claude/channel/permission_request"
 _PERMISSION_VERDICT_METHOD = "notifications/claude/channel/permission"
 
-ToolCallHandler = Callable[[str, dict], Awaitable[list[TextContent]]]
-PermissionRequestHandler = Callable[[str, str, str, str], Awaitable[None]]
 ContentTransformer = Callable[[str, dict], tuple[str, dict]]
-ResourceListHandler = Callable[[], Awaitable[list[Resource]]]
-ResourceTemplateListHandler = Callable[[], Awaitable[list[ResourceTemplate]]]
-ResourceReadHandler = Callable[[Any], Awaitable[list[TextResourceContents]]]
 
 
 def _notif(method: str, params: dict) -> SessionMessage:
@@ -87,15 +69,14 @@ def _notif(method: str, params: dict) -> SessionMessage:
 class ChannelServer:
     """Python SDK for building Claude Code channel servers.
 
-    Wraps an MCP Server with ``claude/channel`` capability declaration,
+    Wraps a FastMCP server with ``claude/channel`` capability declaration,
     an async notification queue, and transport setup (stdio/SSE).
+    Supports ``mount()``, ``add_middleware()``, and all FastMCP composition.
 
     Args:
         name: Server name (appears as ``source`` attribute on ``<channel>`` tags).
-        instructions: Added to Claude's system prompt. Tell Claude what events
-            to expect, whether to reply, and how.
-        permission_relay: If True, declares ``claude/channel/permission`` capability
-            so this channel can receive and relay tool approval prompts.
+        instructions: Added to Claude's system prompt.
+        permission_relay: If True, declares ``claude/channel/permission`` capability.
         queue_size: Max queued notifications before dropping.
     """
 
@@ -111,82 +92,52 @@ class ChannelServer:
         self._instructions = instructions
         self._permission_relay = permission_relay
         self._queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue(maxsize=queue_size)
-        self._tools: list[Tool] = []
-        self._tool_call_handler: ToolCallHandler | None = None
-        self._permission_handler: PermissionRequestHandler | None = None
         self._content_transformer: ContentTransformer | None = None
-        self._resource_list_handler: ResourceListHandler | None = None
-        self._resource_template_handler: ResourceTemplateListHandler | None = None
-        self._resource_read_handler: ResourceReadHandler | None = None
         self._shutdown_hooks: list[Callable] = []
-        self._server: Server | None = None
         self._write_stream: Any = None
 
-    # ── Configuration ────────────────────────────────────────────
+        # The underlying FastMCP server — supports mount(), add_middleware(), @tool, etc.
+        self.server = FastMCP(name, instructions=instructions or None)
 
-    def add_tool(self, tool: Tool) -> None:
-        """Register a tool that Claude can call back through this channel."""
-        self._tools.append(tool)
+    # ── FastMCP delegation (mount, middleware, tools) ─────────────
 
-    def on_tool_call(self, handler: ToolCallHandler) -> ToolCallHandler:
-        """Register the handler for incoming tool calls (decorator or direct)."""
-        self._tool_call_handler = handler
-        return handler
+    def mount(self, server: FastMCP, namespace: str | None = None, **kwargs: Any) -> None:
+        """Mount another FastMCP server — its tools/resources become available."""
+        self.server.mount(server, namespace=namespace, **kwargs)
 
-    def on_permission_request(self, handler: PermissionRequestHandler) -> PermissionRequestHandler:
-        """Register handler for permission relay requests from Claude Code."""
-        self._permission_handler = handler
-        return handler
+    def add_middleware(self, middleware: Any) -> None:
+        """Add FastMCP middleware (e.g. ApprovalMiddleware)."""
+        self.server.add_middleware(middleware)
+
+    def tool(self, *args: Any, **kwargs: Any) -> Any:
+        """Register a tool on the underlying FastMCP server."""
+        return self.server.tool(*args, **kwargs)
+
+    def resource(self, *args: Any, **kwargs: Any) -> Any:
+        """Register a resource on the underlying FastMCP server."""
+        return self.server.resource(*args, **kwargs)
+
+    # ── Content transformer ──────────────────────────────────────
 
     def set_content_transformer(self, fn: ContentTransformer) -> None:
-        """Set a function that transforms (content, meta) before emission.
-
-        Useful for RBAC masking, sanitization, etc.
-        """
+        """Set a function that transforms (content, meta) before notification emission."""
         self._content_transformer = fn
 
     def on_shutdown(self, hook: Callable) -> None:
         """Register a cleanup function called on SIGTERM/SIGINT."""
         self._shutdown_hooks.append(hook)
 
-    def on_list_resources(self, handler: ResourceListHandler) -> ResourceListHandler:
-        """Register handler for listing MCP resources."""
-        self._resource_list_handler = handler
-        return handler
-
-    def on_list_resource_templates(
-        self, handler: ResourceTemplateListHandler
-    ) -> ResourceTemplateListHandler:
-        """Register handler for listing MCP resource templates."""
-        self._resource_template_handler = handler
-        return handler
-
-    def on_read_resource(self, handler: ResourceReadHandler) -> ResourceReadHandler:
-        """Register handler for reading MCP resources."""
-        self._resource_read_handler = handler
-        return handler
-
     # ── Notification emission ────────────────────────────────────
 
     async def notify(self, content: str, meta: dict[str, str] | None = None) -> None:
-        """Push a channel event to Claude Code.
-
-        Args:
-            content: Event body (becomes body of ``<channel>`` tag).
-            meta: Key-value pairs (become attributes on ``<channel>`` tag).
-        """
+        """Push a channel event to Claude Code."""
         try:
             self._queue.put_nowait((content, meta or {}))
         except asyncio.QueueFull:
             print(f"[{self.name}] notify queue full, dropping", file=sys.stderr, flush=True)
 
     async def send_permission_verdict(self, request_id: str, behavior: str) -> None:
-        """Send an allow/deny verdict back to Claude Code.
-
-        Args:
-            request_id: The five-letter ID from the permission request.
-            behavior: ``"allow"`` or ``"deny"``.
-        """
+        """Send an allow/deny verdict back to Claude Code."""
         if self._write_stream is None:
             return
         with contextlib.suppress(Exception):
@@ -197,6 +148,11 @@ class ChannelServer:
                 })
             )
 
+    async def signal_tools_changed(self) -> None:
+        """Signal Claude Code that the tool list has changed."""
+        with contextlib.suppress(asyncio.QueueFull):
+            self._queue.put_nowait(("", {"_tools_changed": "true"}))
+
     # ── Internal: notification drain ─────────────────────────────
 
     async def _drain_notifications(self, write_stream: Any) -> None:
@@ -205,7 +161,6 @@ class ChannelServer:
         while True:
             content, meta = await self._queue.get()
 
-            # tools_changed is a special internal signal
             if meta.get("_tools_changed"):
                 with contextlib.suppress(Exception):
                     await write_stream.send(
@@ -213,7 +168,6 @@ class ChannelServer:
                     )
                 continue
 
-            # Apply content transformer (RBAC masking, sanitization, etc.)
             if self._content_transformer:
                 content, meta = self._content_transformer(content, meta)
 
@@ -224,60 +178,17 @@ class ChannelServer:
             except Exception as e:
                 print(f"[{self.name}] notify failed: {e}", file=sys.stderr, flush=True)
 
-    # ── Internal: MCP server setup ───────────────────────────────
+    # ── Internal ─────────────────────────────────────────────────
 
-    def _build_server(self) -> Server:
-        """Create the MCP Server with channel capabilities."""
+    def _build_init_options(self) -> Any:
+        """Build initialization options with channel capabilities."""
+        from mcp.server import NotificationOptions
+
         experimental: dict[str, dict] = {"claude/channel": {}}
         if self._permission_relay:
             experimental["claude/channel/permission"] = {}
-
-        capabilities: dict[str, Any] = {"experimental": experimental}
-        if self._tools:
-            capabilities["tools"] = {}
-
-        server = Server(
-            self.name,
-            instructions=self._instructions or None,
-        )
-
-        # Tool handlers
-        if self._tools:
-            @server.list_tools()
-            async def _list_tools() -> list[Tool]:
-                return self._tools
-
-            @server.call_tool()
-            async def _call_tool(name: str, arguments: dict) -> list[TextContent]:
-                if self._tool_call_handler:
-                    return await self._tool_call_handler(name, arguments)
-                return [TextContent(type="text", text=f"Error: no handler for tool '{name}'")]
-
-        # Resource handlers
-        if self._resource_list_handler:
-            @server.list_resources()
-            async def _list_resources() -> list[Resource]:
-                return await self._resource_list_handler()
-
-        if self._resource_template_handler:
-            @server.list_resource_templates()
-            async def _list_templates() -> list[ResourceTemplate]:
-                return await self._resource_template_handler()
-
-        if self._resource_read_handler:
-            @server.read_resource()
-            async def _read_resource(uri: Any) -> list[TextResourceContents]:
-                return await self._resource_read_handler(uri)
-
-        self._server = server
-        return server
-
-    def _create_init_options(self, server: Server) -> Any:
-        """Build initialization options with channel capability."""
-        experimental: dict[str, dict] = {"claude/channel": {}}
-        if self._permission_relay:
-            experimental["claude/channel/permission"] = {}
-        return server.create_initialization_options(
+        return self.server._mcp_server.create_initialization_options(
+            notification_options=NotificationOptions(tools_changed=True),
             experimental_capabilities=experimental,
         )
 
@@ -298,21 +209,16 @@ class ChannelServer:
         self,
         extra_tasks: list[Callable[[], Any]] | None = None,
     ) -> None:
-        """Run as a stdio channel (Claude Code spawns this as subprocess).
-
-        Args:
-            extra_tasks: Additional async callables to run in the task group
-                (e.g. adapter.connect, file watchers).
-        """
-        server = self._build_server()
-        init_opts = self._create_init_options(server)
+        """Run as a stdio channel (Claude Code spawns this as subprocess)."""
+        init_opts = self._build_init_options()
         self._install_signals()
 
-        async with stdio_server() as (rs, ws), anyio.create_task_group() as tg:
-            tg.start_soon(server.run, rs, ws, init_opts)
-            tg.start_soon(self._drain_notifications, ws)
-            for task in extra_tasks or []:
-                tg.start_soon(task)
+        async with self.server._lifespan_manager():
+            async with stdio_server() as (rs, ws), anyio.create_task_group() as tg:
+                tg.start_soon(self.server._mcp_server.run, rs, ws, init_opts)
+                tg.start_soon(self._drain_notifications, ws)
+                for task in extra_tasks or []:
+                    tg.start_soon(task)
 
     async def run_sse(
         self,
@@ -321,22 +227,14 @@ class ChannelServer:
         extra_routes: list | None = None,
         extra_tasks: list[Callable[[], Any]] | None = None,
     ) -> None:
-        """Run as an SSE channel with optional extra Starlette routes.
-
-        Args:
-            host: Bind address.
-            port: Bind port.
-            extra_routes: Additional Starlette Route objects to mount.
-            extra_tasks: Additional async callables to run in the task group.
-        """
+        """Run as an SSE channel with optional extra Starlette routes."""
         import uvicorn
         from mcp.server.sse import SseServerTransport
         from starlette.applications import Starlette
         from starlette.responses import JSONResponse
         from starlette.routing import Mount, Route
 
-        server = self._build_server()
-        init_opts = self._create_init_options(server)
+        init_opts = self._build_init_options()
         self._install_signals()
 
         sset = SseServerTransport("/messages/")
@@ -346,7 +244,7 @@ class ChannelServer:
                 sset.connect_sse(req.scope, req.receive, req._send) as (rs, ws),
                 anyio.create_task_group() as tg,
             ):
-                tg.start_soon(server.run, rs, ws, init_opts)
+                tg.start_soon(self.server._mcp_server.run, rs, ws, init_opts)
                 tg.start_soon(self._drain_notifications, ws)
 
         routes = [
@@ -359,7 +257,7 @@ class ChannelServer:
 
         app = Starlette(routes=routes)
 
-        async with anyio.create_task_group() as tg:
+        async with self.server._lifespan_manager(), anyio.create_task_group() as tg:
             tg.start_soon(
                 uvicorn.Server(
                     uvicorn.Config(app, host=host, port=port, log_level="warning")
@@ -367,10 +265,3 @@ class ChannelServer:
             )
             for task in extra_tasks or []:
                 tg.start_soon(task)
-
-    # ── Convenience: signal tools_changed ────────────────────────
-
-    async def signal_tools_changed(self) -> None:
-        """Signal Claude Code that the tool list has changed (triggers re-list)."""
-        with contextlib.suppress(asyncio.QueueFull):
-            self._queue.put_nowait(("", {"_tools_changed": "true"}))

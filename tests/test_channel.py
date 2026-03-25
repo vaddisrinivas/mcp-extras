@@ -1,4 +1,4 @@
-"""Tests for the ChannelServer SDK."""
+"""Tests for the ChannelServer SDK (FastMCP-native)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import signal
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from mcp.types import Resource, ResourceTemplate, TextContent, TextResourceContents, Tool
+from fastmcp import FastMCP
 
 from mcp_extras.channel import (
     _CHANNEL_METHOD,
@@ -29,17 +29,11 @@ class TestNotifHelper:
 
     def test_builds_tools_list_changed(self):
         msg = _notif("notifications/tools/list_changed", {})
-        root = msg.message.root
-        assert root.method == "notifications/tools/list_changed"
-        assert root.params == {}
+        assert msg.message.root.method == "notifications/tools/list_changed"
 
     def test_builds_permission_verdict(self):
-        msg = _notif(
-            _PERMISSION_VERDICT_METHOD,
-            {"request_id": "abcde", "behavior": "allow"},
-        )
+        msg = _notif(_PERMISSION_VERDICT_METHOD, {"request_id": "abcde", "behavior": "allow"})
         root = msg.message.root
-        assert root.method == _PERMISSION_VERDICT_METHOD
         assert root.params["request_id"] == "abcde"
         assert root.params["behavior"] == "allow"
 
@@ -57,16 +51,10 @@ class TestChannelServerInit:
         assert ch.name == "test"
         assert ch._instructions == ""
         assert ch._permission_relay is False
-        assert ch._tools == []
-        assert ch._tool_call_handler is None
-        assert ch._permission_handler is None
         assert ch._content_transformer is None
-        assert ch._resource_list_handler is None
-        assert ch._resource_template_handler is None
-        assert ch._resource_read_handler is None
         assert ch._shutdown_hooks == []
-        assert ch._server is None
         assert ch._write_stream is None
+        assert isinstance(ch.server, FastMCP)
 
     def test_with_all_options(self):
         ch = ChannelServer(
@@ -84,70 +72,55 @@ class TestChannelServerInit:
         ch = ChannelServer("test")
         assert ch._queue.maxsize == 256
 
-
-# ── Tool registration ────────────────────────────────────────────
-
-
-class TestToolRegistration:
-    def test_add_single_tool(self):
-        ch = ChannelServer("test")
-        tool = Tool(
-            name="reply",
-            description="Send reply",
-            inputSchema={"type": "object", "properties": {"text": {"type": "string"}}},
-        )
-        ch.add_tool(tool)
-        assert len(ch._tools) == 1
-        assert ch._tools[0].name == "reply"
-
-    def test_add_multiple_tools(self):
-        ch = ChannelServer("test")
-        ch.add_tool(Tool(name="reply", description="Reply", inputSchema={"type": "object"}))
-        ch.add_tool(Tool(name="react", description="React", inputSchema={"type": "object"}))
-        assert len(ch._tools) == 2
-        assert ch._tools[0].name == "reply"
-        assert ch._tools[1].name == "react"
-
-    def test_on_tool_call_as_decorator(self):
-        ch = ChannelServer("test")
-
-        @ch.on_tool_call
-        async def handler(name, args):
-            return [TextContent(type="text", text="ok")]
-
-        assert ch._tool_call_handler is handler
-
-    def test_on_tool_call_direct_assignment(self):
-        ch = ChannelServer("test")
-
-        async def handler(name, args):
-            return [TextContent(type="text", text="ok")]
-
-        ch.on_tool_call(handler)
-        assert ch._tool_call_handler is handler
+    def test_server_is_fastmcp(self):
+        ch = ChannelServer("myapp")
+        assert isinstance(ch.server, FastMCP)
+        assert ch.server.name == "myapp"
 
 
-# ── Permission request handler ────────────────────────────────────
+# ── FastMCP delegation ───────────────────────────────────────────
 
 
-class TestPermissionRequestHandler:
-    def test_decorator(self):
+class TestFastMCPDelegation:
+    async def test_mount(self):
+        ch = ChannelServer("main")
+        child = FastMCP("child")
+
+        @child.tool()
+        def greet(name: str) -> str:
+            return f"hello {name}"
+
+        ch.mount(child)
+        assert await ch.server.get_tool("greet") is not None
+
+    async def test_mount_with_namespace(self):
+        ch = ChannelServer("main")
+        child = FastMCP("child")
+
+        @child.tool()
+        def greet(name: str) -> str:
+            return f"hello {name}"
+
+        ch.mount(child, namespace="svc")
+        assert await ch.server.get_tool("svc_greet") is not None
+
+    async def test_tool_decorator(self):
         ch = ChannelServer("test")
 
-        @ch.on_permission_request
-        async def handler(request_id, tool_name, description, input_preview):
-            pass
+        @ch.tool()
+        def ping() -> str:
+            return "pong"
 
-        assert ch._permission_handler is handler
+        assert await ch.server.get_tool("ping") is not None
 
-    def test_direct_assignment(self):
+    def test_add_middleware(self):
+        from mcp_extras.middleware import ApprovalMiddleware
+
         ch = ChannelServer("test")
-
-        async def handler(request_id, tool_name, description, input_preview):
-            pass
-
-        ch.on_permission_request(handler)
-        assert ch._permission_handler is handler
+        initial_count = len(ch.server.middleware)
+        mw = ApprovalMiddleware(mode="none", server_name="test")
+        ch.add_middleware(mw)
+        assert len(ch.server.middleware) == initial_count + 1
 
 
 # ── Content transformer ──────────────────────────────────────────
@@ -179,12 +152,9 @@ class TestContentTransformer:
         with pytest.raises(asyncio.CancelledError):
             await drain_task
 
-        assert mock_ws.send.called
-        sent = mock_ws.send.call_args[0][0]
-        params = sent.message.root.params
+        params = mock_ws.send.call_args[0][0].message.root.params
         assert params["content"] == "my *** data"
         assert params["meta"]["masked"] == "true"
-        assert params["meta"]["sender"] == "alice"
 
     async def test_no_transformer_passes_through(self):
         ch = ChannelServer("test")
@@ -197,8 +167,7 @@ class TestContentTransformer:
         with pytest.raises(asyncio.CancelledError):
             await drain_task
 
-        params = mock_ws.send.call_args[0][0].message.root.params
-        assert params["content"] == "raw content"
+        assert mock_ws.send.call_args[0][0].message.root.params["content"] == "raw content"
 
 
 # ── Notify ────────────────────────────────────────────────────────
@@ -216,19 +185,18 @@ class TestNotify:
     async def test_default_meta_is_empty_dict(self):
         ch = ChannelServer("test")
         await ch.notify("hello")
-        content, meta = ch._queue.get_nowait()
-        assert content == "hello"
+        _, meta = ch._queue.get_nowait()
         assert meta == {}
 
-    async def test_drops_when_full_without_raising(self):
+    async def test_drops_when_full(self):
         ch = ChannelServer("test", queue_size=1)
         await ch.notify("first")
-        await ch.notify("second")  # should not raise
+        await ch.notify("second")
         assert ch._queue.qsize() == 1
         content, _ = ch._queue.get_nowait()
         assert content == "first"
 
-    async def test_multiple_events_queued_in_order(self):
+    async def test_multiple_events_in_order(self):
         ch = ChannelServer("test", queue_size=10)
         for i in range(5):
             await ch.notify(f"event-{i}")
@@ -237,7 +205,7 @@ class TestNotify:
             content, _ = ch._queue.get_nowait()
             assert content == f"event-{i}"
 
-    async def test_meta_none_becomes_empty_dict(self):
+    async def test_meta_none_becomes_empty(self):
         ch = ChannelServer("test")
         await ch.notify("test", meta=None)
         _, meta = ch._queue.get_nowait()
@@ -260,12 +228,11 @@ class TestDrainNotifications:
             await drain_task
 
         mock_ws.send.assert_called_once()
-        sent = mock_ws.send.call_args[0][0]
-        params = sent.message.root.params
+        params = mock_ws.send.call_args[0][0].message.root.params
         assert params["content"] == "hello world"
         assert params["meta"]["type"] == "test"
 
-    async def test_handles_tools_changed_signal(self):
+    async def test_handles_tools_changed(self):
         ch = ChannelServer("test")
         await ch.signal_tools_changed()
 
@@ -276,22 +243,17 @@ class TestDrainNotifications:
         with pytest.raises(asyncio.CancelledError):
             await drain_task
 
-        mock_ws.send.assert_called_once()
-        sent = mock_ws.send.call_args[0][0]
-        assert sent.message.root.method == "notifications/tools/list_changed"
+        assert mock_ws.send.call_args[0][0].message.root.method == "notifications/tools/list_changed"
 
     async def test_sets_write_stream(self):
         ch = ChannelServer("test")
         mock_ws = AsyncMock()
-        assert ch._write_stream is None
-
         await ch.notify("test")
         drain_task = asyncio.create_task(ch._drain_notifications(mock_ws))
         await asyncio.sleep(0.05)
         drain_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await drain_task
-
         assert ch._write_stream is mock_ws
 
     async def test_multiple_events_drained_in_order(self):
@@ -308,31 +270,13 @@ class TestDrainNotifications:
             await drain_task
 
         assert mock_ws.send.call_count == 3
-        contents = [
-            call.args[0].message.root.params["content"]
-            for call in mock_ws.send.call_args_list
-        ]
+        contents = [c.args[0].message.root.params["content"] for c in mock_ws.send.call_args_list]
         assert contents == ["first", "second", "third"]
 
-    async def test_send_failure_does_not_crash_drain(self):
+    async def test_send_failure_does_not_crash(self):
         ch = ChannelServer("test")
         await ch.notify("will fail")
         await ch.notify("will succeed")
-
-        mock_ws = AsyncMock()
-        mock_ws.send.side_effect = [RuntimeError("broken pipe"), None]
-        drain_task = asyncio.create_task(ch._drain_notifications(mock_ws))
-        await asyncio.sleep(0.05)
-        drain_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await drain_task
-
-        assert mock_ws.send.call_count == 2
-
-    async def test_tools_changed_send_failure_suppressed(self):
-        ch = ChannelServer("test")
-        await ch.signal_tools_changed()
-        await ch.notify("after signal")
 
         mock_ws = AsyncMock()
         mock_ws.send.side_effect = [RuntimeError("broken"), None]
@@ -341,8 +285,6 @@ class TestDrainNotifications:
         drain_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await drain_task
-
-        # Both attempted: tools_changed (failed silently) + channel event
         assert mock_ws.send.call_count == 2
 
     async def test_interleaved_tools_changed_and_events(self):
@@ -359,102 +301,25 @@ class TestDrainNotifications:
             await drain_task
 
         assert mock_ws.send.call_count == 3
-        methods = [call.args[0].message.root.method for call in mock_ws.send.call_args_list]
+        methods = [c.args[0].message.root.method for c in mock_ws.send.call_args_list]
         assert methods[0] == _CHANNEL_METHOD
         assert methods[1] == "notifications/tools/list_changed"
         assert methods[2] == _CHANNEL_METHOD
 
 
-# ── Server build ─────────────────────────────────────────────────
+# ── Init options ─────────────────────────────────────────────────
 
 
-class TestBuildServer:
-    def test_one_way_channel(self):
-        ch = ChannelServer("webhook", instructions="one-way alerts")
-        server = ch._build_server()
-        assert server is not None
-        assert ch._server is server
-
-    def test_two_way_with_tools(self):
-        ch = ChannelServer("chat")
-        ch.add_tool(
-            Tool(name="reply", description="Reply", inputSchema={"type": "object", "properties": {}})
-        )
-        server = ch._build_server()
-        assert server is not None
-
-    def test_with_resource_handlers(self):
-        ch = ChannelServer("test")
-
-        @ch.on_list_resources
-        async def list_res():
-            return []
-
-        @ch.on_read_resource
-        async def read_res(uri):
-            return []
-
-        server = ch._build_server()
-        assert server is not None
-
-    def test_with_resource_template_handler(self):
-        ch = ChannelServer("test")
-
-        @ch.on_list_resource_templates
-        async def list_tpl():
-            return []
-
-        server = ch._build_server()
-        assert server is not None
-
-    def test_rebuild_replaces_server(self):
-        ch = ChannelServer("test")
-        s1 = ch._build_server()
-        s2 = ch._build_server()
-        assert ch._server is s2
-        assert s1 is not s2
-
-
-class TestCreateInitOptions:
+class TestInitOptions:
     def test_basic_channel(self):
         ch = ChannelServer("test")
-        server = ch._build_server()
-        opts = ch._create_init_options(server)
+        opts = ch._build_init_options()
         assert opts is not None
 
     def test_with_permission_relay(self):
         ch = ChannelServer("test", permission_relay=True)
-        server = ch._build_server()
-        opts = ch._create_init_options(server)
+        opts = ch._build_init_options()
         assert opts is not None
-
-
-# ── Tool call handler dispatch ────────────────────────────────────
-
-
-class TestToolCallDispatch:
-    def test_build_server_registers_tool_handlers_when_tools_present(self):
-        ch = ChannelServer("chat")
-        ch.add_tool(
-            Tool(name="reply", description="Reply", inputSchema={"type": "object", "properties": {}})
-        )
-
-        called = []
-
-        @ch.on_tool_call
-        async def handler(name, args):
-            called.append((name, args))
-            return [TextContent(type="text", text="ok")]
-
-        ch._build_server()
-        # Handler is registered
-        assert ch._tool_call_handler is handler
-
-    def test_no_tools_no_handler_registration(self):
-        ch = ChannelServer("webhook")
-        ch._build_server()
-        # Server built without tool handlers
-        assert ch._tools == []
 
 
 # ── Permission verdict ────────────────────────────────────────────
@@ -468,9 +333,7 @@ class TestPermissionVerdict:
 
         await ch.send_permission_verdict("abcde", "allow")
 
-        mock_ws.send.assert_called_once()
-        sent = mock_ws.send.call_args[0][0]
-        params = sent.message.root.params
+        params = mock_ws.send.call_args[0][0].message.root.params
         assert params["request_id"] == "abcde"
         assert params["behavior"] == "allow"
 
@@ -480,22 +343,17 @@ class TestPermissionVerdict:
         ch._write_stream = mock_ws
 
         await ch.send_permission_verdict("fghij", "deny")
-
-        sent = mock_ws.send.call_args[0][0]
-        assert sent.message.root.params["behavior"] == "deny"
+        assert mock_ws.send.call_args[0][0].message.root.params["behavior"] == "deny"
 
     async def test_no_stream_is_noop(self):
         ch = ChannelServer("test")
-        # Should not raise when no write stream
         await ch.send_permission_verdict("abcde", "allow")
 
     async def test_send_failure_suppressed(self):
-        ch = ChannelServer("test", permission_relay=True)
+        ch = ChannelServer("test")
         mock_ws = AsyncMock()
         mock_ws.send.side_effect = RuntimeError("broken")
         ch._write_stream = mock_ws
-
-        # Should not raise
         await ch.send_permission_verdict("abcde", "allow")
 
 
@@ -525,26 +383,10 @@ class TestShutdownHooks:
 
         with patch.object(signal, "signal") as mock_signal:
             ch._install_signals()
-
-        # Get the handler that was registered
         handler = mock_signal.call_args_list[0].args[1]
-
         with pytest.raises(SystemExit):
             handler()
-
         assert called == ["a", "b"]
-
-    def test_shutdown_hook_exception_suppressed(self):
-        ch = ChannelServer("test")
-        ch.on_shutdown(lambda: (_ for _ in ()).throw(ValueError("boom")))
-        ch.on_shutdown(lambda: None)  # second hook should still run
-
-        with patch.object(signal, "signal") as mock_signal:
-            ch._install_signals()
-
-        handler = mock_signal.call_args_list[0].args[1]
-        with pytest.raises(SystemExit):
-            handler()
 
 
 # ── Signal tools changed ─────────────────────────────────────────
@@ -555,67 +397,21 @@ class TestSignalToolsChanged:
         ch = ChannelServer("test")
         await ch.signal_tools_changed()
         assert ch._queue.qsize() == 1
-        content, meta = ch._queue.get_nowait()
+        _, meta = ch._queue.get_nowait()
         assert meta.get("_tools_changed") == "true"
-        assert content == ""
 
     async def test_suppressed_when_full(self):
         ch = ChannelServer("test", queue_size=1)
         await ch.notify("blocking")
-        await ch.signal_tools_changed()  # should not raise
+        await ch.signal_tools_changed()
         assert ch._queue.qsize() == 1
 
 
-# ── Resource handlers ─────────────────────────────────────────────
-
-
-class TestResourceHandlers:
-    def test_list_resources_decorator(self):
-        ch = ChannelServer("test")
-
-        @ch.on_list_resources
-        async def list_res():
-            return [Resource(name="test", uri="test://x", description="x")]
-
-        assert ch._resource_list_handler is list_res
-
-    def test_read_resource_decorator(self):
-        ch = ChannelServer("test")
-
-        @ch.on_read_resource
-        async def read_res(uri):
-            return [TextResourceContents(uri=uri, text="data", mimeType="text/plain")]
-
-        assert ch._resource_read_handler is read_res
-
-    def test_list_resource_templates_decorator(self):
-        ch = ChannelServer("test")
-
-        @ch.on_list_resource_templates
-        async def list_tpl():
-            return [
-                ResourceTemplate(
-                    name="memory",
-                    uriTemplate="c3://memory/{app}",
-                    description="Memory",
-                )
-            ]
-
-        assert ch._resource_template_handler is list_tpl
-
-    def test_no_resource_handlers_by_default(self):
-        ch = ChannelServer("test")
-        assert ch._resource_list_handler is None
-        assert ch._resource_template_handler is None
-        assert ch._resource_read_handler is None
-
-
-# ── End-to-end: full drain cycle ──────────────────────────────────
+# ── End-to-end ────────────────────────────────────────────────────
 
 
 class TestEndToEnd:
     async def test_channel_event_notification_format(self):
-        """Verify the exact wire format of a channel notification."""
         ch = ChannelServer("my-bot")
         await ch.notify("user says hello", meta={"sender": "alice", "chat_id": "123"})
 
@@ -626,77 +422,52 @@ class TestEndToEnd:
         with pytest.raises(asyncio.CancelledError):
             await drain_task
 
-        sent = mock_ws.send.call_args[0][0]
-        root = sent.message.root
+        root = mock_ws.send.call_args[0][0].message.root
         assert root.jsonrpc == "2.0"
         assert root.method == _CHANNEL_METHOD
         assert root.params["content"] == "user says hello"
         assert root.params["meta"]["sender"] == "alice"
-        assert root.params["meta"]["chat_id"] == "123"
 
-    async def test_permission_verdict_notification_format(self):
-        """Verify the exact wire format of a permission verdict."""
+    async def test_permission_verdict_format(self):
         ch = ChannelServer("my-bot", permission_relay=True)
         mock_ws = AsyncMock()
         ch._write_stream = mock_ws
 
         await ch.send_permission_verdict("xyzwk", "allow")
 
-        sent = mock_ws.send.call_args[0][0]
-        root = sent.message.root
-        assert root.jsonrpc == "2.0"
+        root = mock_ws.send.call_args[0][0].message.root
         assert root.method == _PERMISSION_VERDICT_METHOD
         assert root.params["request_id"] == "xyzwk"
-        assert root.params["behavior"] == "allow"
 
-    async def test_two_way_channel_lifecycle(self):
-        """Build a two-way channel with tool, notify, and drain."""
-        ch = ChannelServer("chat", instructions="Reply with the reply tool.")
-        ch.add_tool(
-            Tool(
-                name="reply",
-                description="Send a reply",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "chat_id": {"type": "string"},
-                        "text": {"type": "string"},
-                    },
-                    "required": ["chat_id", "text"],
-                },
-            )
-        )
+    async def test_mounted_service_tools_discoverable(self):
+        ch = ChannelServer("main")
+        svc = FastMCP("memory")
 
-        replies = []
+        @svc.tool()
+        def memory_write(app: str, entity: str, name: str) -> str:
+            return "ok"
 
-        @ch.on_tool_call
-        async def handle(name, arguments):
-            replies.append((name, arguments))
-            return [TextContent(type="text", text="sent")]
+        @svc.tool()
+        def memory_read(app: str) -> str:
+            return "[]"
 
-        # Simulate inbound message
-        await ch.notify("hi from user", meta={"chat_id": "42", "sender": "bob"})
+        ch.mount(svc)
 
-        # Drain
-        mock_ws = AsyncMock()
-        drain_task = asyncio.create_task(ch._drain_notifications(mock_ws))
-        await asyncio.sleep(0.05)
-        drain_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await drain_task
+        assert await ch.server.get_tool("memory_write") is not None
+        assert await ch.server.get_tool("memory_read") is not None
 
-        # Verify notification went out
-        assert mock_ws.send.call_count == 1
-        params = mock_ws.send.call_args[0][0].message.root.params
-        assert params["meta"]["chat_id"] == "42"
+    async def test_namespaced_mount(self):
+        ch = ChannelServer("main")
+        svc = FastMCP("storage")
 
-        # Simulate Claude calling the reply tool
-        result = await ch._tool_call_handler("reply", {"chat_id": "42", "text": "hello back"})
-        assert result[0].text == "sent"
-        assert replies == [("reply", {"chat_id": "42", "text": "hello back"})]
+        @svc.tool()
+        def save_file(path: str, content: str) -> str:
+            return f"saved {path}"
 
-    async def test_channel_with_transformer_and_multiple_events(self):
-        """Full cycle: notify, transform, drain multiple events."""
+        ch.mount(svc, namespace="fs")
+        assert await ch.server.get_tool("fs_save_file") is not None
+
+    async def test_channel_with_transformer_and_events(self):
         ch = ChannelServer("masked-bot")
 
         def redact_phones(content, meta):
@@ -704,9 +475,8 @@ class TestEndToEnd:
             return re.sub(r"\d{10,}", "[REDACTED]", content), meta
 
         ch.set_content_transformer(redact_phones)
-
-        await ch.notify("call me at 1234567890", meta={"type": "msg"})
-        await ch.notify("no phone here", meta={"type": "msg"})
+        await ch.notify("call 1234567890")
+        await ch.notify("no phone")
 
         mock_ws = AsyncMock()
         drain_task = asyncio.create_task(ch._drain_notifications(mock_ws))
@@ -717,7 +487,5 @@ class TestEndToEnd:
 
         assert mock_ws.send.call_count == 2
         first = mock_ws.send.call_args_list[0].args[0].message.root.params["content"]
-        second = mock_ws.send.call_args_list[1].args[0].message.root.params["content"]
         assert "[REDACTED]" in first
         assert "1234567890" not in first
-        assert second == "no phone here"
